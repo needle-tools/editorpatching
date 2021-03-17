@@ -40,10 +40,9 @@ namespace needle.EditorPatching
 
             EditorGUILayout.BeginVertical();
             scroll = EditorGUILayout.BeginScrollView(scroll);
-
             EditorGUILayout.BeginVertical();
-            var skipInactive = EditorPrefs.GetBool(k_ActiveOnlyKey);
             
+            var skipInactive = EditorPrefs.GetBool(k_ActiveOnlyKey);
             var managedPatches = PatchManager.KnownPatches;
             if (managedPatches != null && managedPatches.Count > 0)
             {
@@ -92,6 +91,8 @@ namespace needle.EditorPatching
             
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
+            PatchManager.AllowDebugLogs = GUILayout.Toggle(PatchManager.AllowDebugLogs, "Debug Log");
+            GUILayout.Space(5);
             EditorPrefs.SetBool(k_ActiveOnlyKey, GUILayout.Toggle(EditorPrefs.GetBool(k_ActiveOnlyKey, false), "Hide Inactive"));
             if(GUILayout.Button("Refresh Patch List", GUILayout.Width(180)))
             {
@@ -133,7 +134,9 @@ namespace needle.EditorPatching
 
     [FilePath("ProjectSettings/EditorPatchingSettings.asset", FilePathAttribute.Location.ProjectFolder)]
     internal class PatchManagerSettings : ScriptableSingleton<PatchManagerSettings>
-    {        
+    {
+        public bool DebugLog;
+        
         [SerializeField] private List<string> enabledPatchIds = new List<string>();
         [SerializeField] private List<string> disabledPatchIds = new List<string>();
 

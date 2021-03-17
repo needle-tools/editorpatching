@@ -7,10 +7,11 @@ namespace needle.EditorPatching
 {
     public abstract class EditorPatchProvider : IManagedPatch
     {
-        public abstract string DisplayName { get; }
-        public abstract string Description { get; }
+        public virtual string DisplayName { get; }
+        public virtual string Description { get; }
+        public virtual bool Persistent() => true;
 
-        public string ID() => GetType().FullName;
+        public virtual string ID() => GetType().FullName;
         public string Name => DisplayName ?? GetType().Name;
 
         public string Id => ID();
@@ -42,9 +43,9 @@ namespace needle.EditorPatching
 
         public bool GetIsActive() => PatchManager.PatchIsActive(this);
 
-        public void Enable()
+        public Task Enable()
         {
-            PatchManager.EnablePatch(this);
+            return PatchManager.EnablePatch(this);
         }
 
         public void Disable()
