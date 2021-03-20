@@ -37,14 +37,14 @@ namespace needle.EditorPatching
 
 	public static class PatchManager
 	{
-		[MenuItem(Constants.MenuItem + "Clear Settings Cache", priority = -1000)]
+		[MenuItem(Constants.MenuItem + "Clear Settings Cache", priority = Constants.DefaultTopLevelPriority)]
 		public static void ClearSettingsCache()
 		{
 			PatchManagerSettings.Clear(true);
 		}
 
 
-		[MenuItem(Constants.MenuItem + "Disable All Patches", priority = -1000)]
+		[MenuItem(Constants.MenuItem + "Disable All Patches", priority = Constants.DefaultTopLevelPriority)]
 		public static void DisableAllPatches()
 		{
 			DisableAllPatches(true);
@@ -275,20 +275,20 @@ namespace needle.EditorPatching
 			patchProvider.OnRegistered();
 		}
 
-		public static Task EnablePatch(EditorPatchProvider patchProvider)
+		public static Task EnablePatch(EditorPatchProvider patchProvider, bool enablePersistent = true)
 		{
 			var patchType = patchProvider.ID();
-			return EnablePatch(patchType);
+			return EnablePatch(patchType, enablePersistent);
 		}
 
-		public static Task EnablePatch(Type patchType)
+		public static Task EnablePatch(Type patchType, bool enablePersistent = true)
 		{
 			var patchID = patchType.FullName;
 			if (patchID == null) return Task.CompletedTask;
-			return EnablePatch(patchID);
+			return EnablePatch(patchID, enablePersistent);
 		}
 
-		public static Task EnablePatch(string patchID)
+		public static Task EnablePatch(string patchID, bool enablePersistent = true)
 		{
 			SetHarmonyDebugState(AllowDebugLogs);
 			
@@ -309,7 +309,7 @@ namespace needle.EditorPatching
 					tasks.Add(t);
 					harmonyPatches.Add(patchID, instance);
 					patchProviders[patchID].Instance.OnEnabledPatch();
-					if(patchProviders[patchID].Instance.Persistent())
+					if(enablePersistent && patchProviders[patchID].Instance.Persistent())
 						PatchManagerSettings.SetPersistentActive(patchID, true);
 					InternalEditorUtility.RepaintAllViews();
 				}
@@ -326,7 +326,8 @@ namespace needle.EditorPatching
 				if (!patch.IsActive)
 				{
 					patch.EnablePatch();
-					PatchManagerSettings.SetPersistentActive(patchID, true);
+					if(enablePersistent)
+						PatchManagerSettings.SetPersistentActive(patchID, true);
 					InternalEditorUtility.RepaintAllViews();
 				}
 			}
@@ -334,20 +335,20 @@ namespace needle.EditorPatching
 			return Task.WhenAll(tasks);
 		}
 
-		public static void DisablePatch(EditorPatchProvider patch)
+		public static void DisablePatch(EditorPatchProvider patch, bool setPersistentState = true)
 		{
 			if (patch == null) return;
-			DisablePatch(patch.ID());
+			DisablePatch(patch.ID(), setPersistentState);
 		}
 
-		public static void DisablePatch(Type patch)
+		public static void DisablePatch(Type patch, bool setPersistentState = true)
 		{
 			var patchID = patch.FullName;
 			if (patchID == null) return;
-			DisablePatch(patchID);
+			DisablePatch(patchID, setPersistentState);
 		}
 
-		public static void DisablePatch(string patchID)
+		public static void DisablePatch(string patchID, bool setPersistentState = true)
 		{
 			SetHarmonyDebugState(AllowDebugLogs);
 			
@@ -360,7 +361,8 @@ namespace needle.EditorPatching
 				harmonyPatches.Remove(patchID);
 				patchProviders[patchID].Instance.OnDisabledPatch();
 				InternalEditorUtility.RepaintAllViews();
-				PatchManagerSettings.SetPersistentActive(patchID, false);
+				if(setPersistentState)
+					PatchManagerSettings.SetPersistentActive(patchID, false);
 			}
             
 			if (knownPatches.ContainsKey(patchID))
@@ -369,7 +371,8 @@ namespace needle.EditorPatching
 				if (!patch.IsActive) return;
 				patch.DisablePatch();
 				InternalEditorUtility.RepaintAllViews();
-				PatchManagerSettings.SetPersistentActive(patchID, false);
+				if(setPersistentState)
+					PatchManagerSettings.SetPersistentActive(patchID, false);
 			}
 		}
 

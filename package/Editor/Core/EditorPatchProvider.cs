@@ -43,14 +43,14 @@ namespace needle.EditorPatching
 
         public bool GetIsActive() => PatchManager.PatchIsActive(this);
 
-        public Task Enable()
+        public Task Enable(bool updatePersistentState = true)
         {
-            return PatchManager.EnablePatch(this);
+            return PatchManager.EnablePatch(this, updatePersistentState);
         }
 
-        public void Disable()
+        public void Disable(bool updatePersistentState = true)
         {
-            PatchManager.DisablePatch(this);
+            PatchManager.DisablePatch(this, updatePersistentState);
         }
 
         public virtual void OnRegistered()
