@@ -178,16 +178,13 @@ namespace needle.EditorPatching
 				var prov = patchProviders[id].Instance;
 				path = AssetDatabase.FindAssets(prov.GetType().Name).Select(AssetDatabase.GUIDToAssetPath)
 					.FirstOrDefault(f => f != null && f.EndsWith($".cs"));
-				if (!string.IsNullOrEmpty(path))
-				{
-					filePaths.Add(id, path);
-				}
+				filePaths.Add(id, path);
 			}
 
 			if (filePaths.ContainsKey(id))
 			{
 				path = filePaths[id];
-				return true;
+				return File.Exists(path);
 			}
 
 			path = null;
@@ -243,16 +240,6 @@ namespace needle.EditorPatching
 			// avoid registering patches multiple times
 			if (id == null) return;
 			if (!allowUpdate && patchProviders.ContainsKey(id)) return;
-            
-			if (!filePaths.ContainsKey(id))
-			{
-				var path = AssetDatabase.FindAssets(patchProvider.GetType().Name).Select(AssetDatabase.GUIDToAssetPath)
-					.FirstOrDefault(f => f != null && f.EndsWith($".cs"));
-				if (!string.IsNullOrEmpty(path))
-				{
-					filePaths.Add(id, path);
-				}
-			}
             
 			if (string.IsNullOrEmpty(id))
 			{
