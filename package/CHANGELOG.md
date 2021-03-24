@@ -4,6 +4,11 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-pre.2] - 2021-03-24
+- enabling / disabling patches does not immediately trigger UI repaint (caused a lot of overhead when enabling/disabling many patches at once)
+- disabling a patch is awaitable now too and runs on a background thread
+- changed patch disabling to manual unpatching instead of using Harmony ``UnpatchAll``
+
 ## [1.1.0-pre.1] - 2021-03-20
 - expose option to not set persistent patch state to avoid writing dynamic patches state information in settings file
 

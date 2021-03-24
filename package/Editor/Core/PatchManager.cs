@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Threading.Tasks;
 using HarmonyLib;
@@ -24,13 +25,15 @@ namespace needle.EditorPatching
 		}
 	}
 
-	internal struct EditorPatchData
+	internal class EditorPatchData
 	{
-		public EditorPatch Patch;
+		public EditorPatch EditorPatch;
 		public MethodInfo PrefixMethod;
 		public MethodInfo PostfixMethod;
 		public MethodInfo TranspilerMethod;
 		public MethodInfo FinalizerMethod;
+		
+		public List<MethodBase> PatchedMethods;
 	}
 	
 	// TODO: expose HarmonyInstance.DEBUG = true -> https://github.com/pardeike/Harmony/issues/79#issuecomment-386356598
@@ -97,6 +100,20 @@ namespace needle.EditorPatching
 
 			// AssemblyReloadEvents.beforeAssemblyReload += DisableAllPatches(false);
 			// CompilationPipeline.compilationStarted += o => DisableAllPatches(false);
+
+			EditorApplication.update += OnEditorUpdate;
+		}
+
+		private static int patchesChangedFrame;
+
+		private static void OnEditorUpdate()
+		{
+			if (!EditorApplication.isPlaying && patchesChangedFrame > 0 && Time.frameCount - patchesChangedFrame > 2)
+			{
+				patchesChangedFrame = -1;
+				// InternalEditorUtility.RepaintAllViews();
+				// Debug.Log("Repaint");
+			}
 		}
 
 		private static void DelayedEnablePatchedThatHadBeenActivePreviously()
@@ -151,6 +168,17 @@ namespace needle.EditorPatching
 			{
 				path = null;
 				return false;
+			}
+            
+			if (!filePaths.ContainsKey(id) && patchProviders.ContainsKey(id))
+			{
+				var prov = patchProviders[id].Instance;
+				path = AssetDatabase.FindAssets(prov.GetType().Name).Select(AssetDatabase.GUIDToAssetPath)
+					.FirstOrDefault(f => f != null && f.EndsWith($".cs"));
+				if (!string.IsNullOrEmpty(path))
+				{
+					filePaths.Add(id, path);
+				}
 			}
 
 			if (filePaths.ContainsKey(id))
@@ -243,7 +271,7 @@ namespace needle.EditorPatching
 				var finalizer = type.GetMethod("Finalizer", flags);
 				patchData.Add(new EditorPatchData()
 				{
-					Patch = patch,
+					EditorPatch = patch,
 					PrefixMethod = prefix,
 					PostfixMethod = postfix,
 					TranspilerMethod = transpiler,
@@ -305,13 +333,13 @@ namespace needle.EditorPatching
 				if (patchProviders[patchID].Instance.OnWillEnablePatch())
 				{
 					var instance = new Harmony(patchID);
-					var t = ApplyPatch(instance, info);
+					var t = ApplyPatch(instance, info, WaitingForActivation);
 					tasks.Add(t);
 					harmonyPatches.Add(patchID, instance);
 					patchProviders[patchID].Instance.OnEnabledPatch();
 					if(enablePersistent && patchProviders[patchID].Instance.Persistent())
 						PatchManagerSettings.SetPersistentActive(patchID, true);
-					InternalEditorUtility.RepaintAllViews();
+					patchesChangedFrame = Time.frameCount;
 				}
 			}
 			else
@@ -328,28 +356,30 @@ namespace needle.EditorPatching
 					patch.EnablePatch();
 					if(enablePersistent)
 						PatchManagerSettings.SetPersistentActive(patchID, true);
-					InternalEditorUtility.RepaintAllViews();
+					patchesChangedFrame = Time.frameCount;
 				}
 			}
 
 			return Task.WhenAll(tasks);
 		}
 
-		public static void DisablePatch(EditorPatchProvider patch, bool setPersistentState = true)
+		public static Task DisablePatch(EditorPatchProvider patch, bool setPersistentState = true)
 		{
-			if (patch == null) return;
-			DisablePatch(patch.ID(), setPersistentState);
+			if (patch == null) return Task.CompletedTask;
+			return DisablePatch(patch.ID(), setPersistentState);
 		}
 
-		public static void DisablePatch(Type patch, bool setPersistentState = true)
+		public static Task DisablePatch(Type patch, bool setPersistentState = true)
 		{
 			var patchID = patch.FullName;
-			if (patchID == null) return;
-			DisablePatch(patchID, setPersistentState);
+			if (patchID == null) return Task.CompletedTask;
+			return DisablePatch(patchID, setPersistentState);
 		}
 
-		public static void DisablePatch(string patchID, bool setPersistentState = true)
+		public static Task DisablePatch(string patchID, bool setPersistentState = true)
 		{
+			var task = Task.CompletedTask;
+			
 			SetHarmonyDebugState(AllowDebugLogs);
 			
 			if (WaitingForActivation.Contains(patchID)) WaitingForActivation.Remove(patchID);
@@ -357,10 +387,26 @@ namespace needle.EditorPatching
 			if (patchProviders.ContainsKey(patchID) && harmonyPatches.ContainsKey(patchID))
 			{
 				var instance = harmonyPatches[patchID];
-				instance.UnpatchAll(patchID);
+				var prov = patchProviders[patchID];
+				var foundMethod = false;
+				var taskList = new List<Task>(){task};
+				foreach (var e in prov.Data)
+				{
+					if (e.PatchedMethods == null) continue;
+					foundMethod |= e.PatchedMethods.Count > 0;
+					foreach (var original in e.PatchedMethods)
+					{
+						var t = Unpatch(original, instance);
+						taskList.Add(t);
+					}
+					e.PatchedMethods.Clear();
+				}
+				task = Task.WhenAll(taskList);
+				if(!foundMethod)
+					instance.UnpatchAll(patchID);
 				harmonyPatches.Remove(patchID);
-				patchProviders[patchID].Instance.OnDisabledPatch();
-				InternalEditorUtility.RepaintAllViews();
+				prov.Instance.OnDisabledPatch();
+				patchesChangedFrame = Time.frameCount;
 				if(setPersistentState)
 					PatchManagerSettings.SetPersistentActive(patchID, false);
 			}
@@ -368,25 +414,42 @@ namespace needle.EditorPatching
 			if (knownPatches.ContainsKey(patchID))
 			{
 				var patch = knownPatches[patchID];
-				if (!patch.IsActive) return;
-				patch.DisablePatch();
-				InternalEditorUtility.RepaintAllViews();
-				if(setPersistentState)
-					PatchManagerSettings.SetPersistentActive(patchID, false);
+				if (patch.IsActive)
+				{
+					patch.DisablePatch();
+					patchesChangedFrame = Time.frameCount;
+					if(setPersistentState)
+						PatchManagerSettings.SetPersistentActive(patchID, false);
+				}
 			}
+			return task;
+		}
+
+		private static Task Unpatch(MethodBase original, Harmony instance)
+		{
+			if (!original.HasMethodBody()) return Task.CompletedTask;
+			return Task.Run(() =>
+			{
+				var patches = Harmony.GetPatchInfo(original);
+				patches.Postfixes.Do( patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));;
+				patches.Prefixes.Do( (patchInfo => instance.Unpatch(original, patchInfo.PatchMethod)));
+				patches.Transpilers.Do((patchInfo => instance.Unpatch(original, patchInfo.PatchMethod)));
+				patches.Finalizers.Do(patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));
+				patchesChangedFrame = Time.frameCount;
+			});
 		}
 
 		public static bool IsWaitingForLoad(string patchId) => WaitingForActivation.Contains(patchId);
 
 		private static readonly HashSet<string> WaitingForActivation = new HashSet<string>();
 
-		private static async Task ApplyPatch(Harmony instance, EditorPatchProviderInfo provider)
+		private static async Task ApplyPatch(Harmony instance, EditorPatchProviderInfo provider, HashSet<string> waitList)
 		{
-			if (WaitingForActivation.Contains(provider.PatchID)) return;
-			WaitingForActivation.Add(provider.PatchID);
+			if (waitList.Contains(provider.PatchID)) return;
+			waitList.Add(provider.PatchID);
 			while (true)
 			{
-				if (!WaitingForActivation.Contains(provider.PatchID)) return;
+				if (!waitList.Contains(provider.PatchID)) return;
 				if (provider.Instance.AllPatchesAreReadyToLoad()) break;
 				await Task.Delay(20);
 			}
@@ -398,7 +461,7 @@ namespace needle.EditorPatching
 				await Task.Delay(1);
 			}
 
-			if (WaitingForActivation.Contains(provider.PatchID) == false) return;
+			if (waitList.Contains(provider.PatchID) == false) return;
 			
 
 			if (AllowDebugLogs)
@@ -407,29 +470,33 @@ namespace needle.EditorPatching
 			var patchData = provider.Data;
 			foreach (var data in patchData)
 			{
-				var patch = data.Patch;
+				if (data.PatchedMethods == null) data.PatchedMethods = new List<MethodBase>();
+				
+				var patch = data.EditorPatch;
 				// var allowLogs = AllowDebugLogs;
 				try
 				{
+					var data1 = data;
 					await Task.Run(async () =>
 					{
 						foreach (var method in await patch.GetTargetMethods())
 						{
 							if (method == null) continue;
-							if (!WaitingForActivation.Contains(provider.PatchID)) break;
+							if (!waitList.Contains(provider.PatchID)) break;
 							try
 							{
 								instance.Patch(
 									method,
-									data.PrefixMethod != null ? new HarmonyMethod(data.PrefixMethod) : null,
-									data.PostfixMethod != null ? new HarmonyMethod(data.PostfixMethod) : null,
-									data.TranspilerMethod != null ? new HarmonyMethod(data.TranspilerMethod) : null,
-									data.FinalizerMethod != null ? new HarmonyMethod(data.FinalizerMethod) : null
+									data1.PrefixMethod != null ? new HarmonyMethod(data1.PrefixMethod) : null,
+									data1.PostfixMethod != null ? new HarmonyMethod(data1.PostfixMethod) : null,
+									data1.TranspilerMethod != null ? new HarmonyMethod(data1.TranspilerMethod) : null,
+									data1.FinalizerMethod != null ? new HarmonyMethod(data1.FinalizerMethod) : null
 								);
+								data1.PatchedMethods.Add(method);
 							}
 							catch (NotSupportedException e)
 							{
-								Debug.LogWarning("Patching \"" + provider.Instance.Name + "\" is not supported: "+  e.Message +"\n" + e);
+								Debug.LogWarning("Patching \"" + provider.Instance.Name + "\" is not supported: " + e.Message + "\n" + e);
 							}
 							catch (Exception e)
 							{
@@ -439,8 +506,8 @@ namespace needle.EditorPatching
 							}
 						}
 					});
-
-					if (!WaitingForActivation.Contains(provider.PatchID))
+					
+					if (!waitList.Contains(provider.PatchID))
 					{
 						instance.UnpatchAll(provider.PatchID);
 					}
@@ -453,8 +520,8 @@ namespace needle.EditorPatching
 				}
 			}
 
-			if (WaitingForActivation.Contains(provider.PatchID))
-				WaitingForActivation.Remove(provider.PatchID);
+			if (waitList.Contains(provider.PatchID))
+				waitList.Remove(provider.PatchID);
 		}
 
 
