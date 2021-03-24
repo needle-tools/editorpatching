@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace needle.EditorPatching
@@ -49,9 +48,9 @@ namespace needle.EditorPatching
             return PatchManager.EnablePatch(this, updatePersistentState);
         }
 
-        public Task Disable(bool updatePersistentState = true)
+        public Task Disable(bool fast = false, bool updatePersistentState = true)
         {
-            return PatchManager.DisablePatch(this, updatePersistentState);
+            return PatchManager.DisablePatch(this, fast, updatePersistentState);
         }
 
         public virtual void OnRegistered()

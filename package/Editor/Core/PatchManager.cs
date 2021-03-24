@@ -3,12 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Threading.Tasks;
 using HarmonyLib;
 using UnityEditor;
-using UnityEditorInternal;
 using UnityEngine;
 
 namespace needle.EditorPatching
@@ -61,7 +59,7 @@ namespace needle.EditorPatching
 				var instance = prov.Value.Instance;
 				if (instance.GetIsActive())
 				{
-					DisablePatch(instance);
+					DisablePatch(instance, false);
 					if (resetPersistence) continue;
 					// keep persistence state
 					PatchManagerSettings.SetPersistentActive(instance.ID(), true);
@@ -105,16 +103,21 @@ namespace needle.EditorPatching
 		}
 
 		private static int patchesChangedFrame;
+		private static int threadedFrameCount;
 
 		private static void OnEditorUpdate()
 		{
-			if (!EditorApplication.isPlaying && patchesChangedFrame > 0 && Time.frameCount - patchesChangedFrame > 2)
+			if (!EditorApplication.isPlaying && patchesChangedFrame > 0 && threadedFrameCount - patchesChangedFrame > 2)
 			{
 				patchesChangedFrame = -1;
 				// InternalEditorUtility.RepaintAllViews();
 				// Debug.Log("Repaint");
 			}
+			++threadedFrameCount;
 		}
+
+		// this is also called from background thread
+		private static void InternalMarkChanged() => patchesChangedFrame = threadedFrameCount;
 
 		private static void DelayedEnablePatchedThatHadBeenActivePreviously()
 		{
@@ -339,7 +342,7 @@ namespace needle.EditorPatching
 					patchProviders[patchID].Instance.OnEnabledPatch();
 					if(enablePersistent && patchProviders[patchID].Instance.Persistent())
 						PatchManagerSettings.SetPersistentActive(patchID, true);
-					patchesChangedFrame = Time.frameCount;
+					InternalMarkChanged();
 				}
 			}
 			else
@@ -356,27 +359,27 @@ namespace needle.EditorPatching
 					patch.EnablePatch();
 					if(enablePersistent)
 						PatchManagerSettings.SetPersistentActive(patchID, true);
-					patchesChangedFrame = Time.frameCount;
+					InternalMarkChanged();
 				}
 			}
 
 			return Task.WhenAll(tasks);
 		}
 
-		public static Task DisablePatch(EditorPatchProvider patch, bool setPersistentState = true)
+		public static Task DisablePatch(EditorPatchProvider patch, bool fast, bool setPersistentState = true)
 		{
 			if (patch == null) return Task.CompletedTask;
-			return DisablePatch(patch.ID(), setPersistentState);
+			return DisablePatch(patch.ID(), fast, setPersistentState);
 		}
 
-		public static Task DisablePatch(Type patch, bool setPersistentState = true)
+		public static Task DisablePatch(Type patch, bool fast, bool setPersistentState = true)
 		{
 			var patchID = patch.FullName;
 			if (patchID == null) return Task.CompletedTask;
-			return DisablePatch(patchID, setPersistentState);
+			return DisablePatch(patchID, fast, setPersistentState);
 		}
 
-		public static Task DisablePatch(string patchID, bool setPersistentState = true)
+		public static Task DisablePatch(string patchID, bool fast, bool setPersistentState = true)
 		{
 			var task = Task.CompletedTask;
 			
@@ -388,25 +391,33 @@ namespace needle.EditorPatching
 			{
 				var instance = harmonyPatches[patchID];
 				var prov = patchProviders[patchID];
-				var foundMethod = false;
-				var taskList = new List<Task>(){task};
-				foreach (var e in prov.Data)
+
+				if (fast)
 				{
-					if (e.PatchedMethods == null) continue;
-					foundMethod |= e.PatchedMethods.Count > 0;
-					foreach (var original in e.PatchedMethods)
+					var taskList = new List<Task> {task};
+					foreach (var e in prov.Data)
 					{
-						var t = Unpatch(original, instance);
-						taskList.Add(t);
+						if (e.PatchedMethods == null) continue;
+						foreach (var original in e.PatchedMethods)
+						{
+							var t = UnpatchFast(original, instance);
+							taskList.Add(t);
+						}
+						e.PatchedMethods.Clear();
 					}
-					e.PatchedMethods.Clear();
+					task = Task.WhenAll(taskList);
 				}
-				task = Task.WhenAll(taskList);
-				if(!foundMethod)
+				else
+				{
+					// clear cache first to not collect duplicates
+					foreach (var e in prov.Data) e.PatchedMethods?.Clear();
 					instance.UnpatchAll(patchID);
+					if (AllowDebugLogs) Debug.Log("Unpatched " + patchID);
+				}
+				
 				harmonyPatches.Remove(patchID);
 				prov.Instance.OnDisabledPatch();
-				patchesChangedFrame = Time.frameCount;
+				InternalMarkChanged();
 				if(setPersistentState)
 					PatchManagerSettings.SetPersistentActive(patchID, false);
 			}
@@ -417,7 +428,7 @@ namespace needle.EditorPatching
 				if (patch.IsActive)
 				{
 					patch.DisablePatch();
-					patchesChangedFrame = Time.frameCount;
+					InternalMarkChanged();
 					if(setPersistentState)
 						PatchManagerSettings.SetPersistentActive(patchID, false);
 				}
@@ -425,17 +436,25 @@ namespace needle.EditorPatching
 			return task;
 		}
 
-		private static Task Unpatch(MethodBase original, Harmony instance)
+		private static Task UnpatchFast(MethodBase original, Harmony instance)
 		{
 			if (!original.HasMethodBody()) return Task.CompletedTask;
 			return Task.Run(() =>
 			{
-				var patches = Harmony.GetPatchInfo(original);
-				patches.Postfixes.Do( patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));;
-				patches.Prefixes.Do( (patchInfo => instance.Unpatch(original, patchInfo.PatchMethod)));
-				patches.Transpilers.Do((patchInfo => instance.Unpatch(original, patchInfo.PatchMethod)));
-				patches.Finalizers.Do(patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));
-				patchesChangedFrame = Time.frameCount;
+				try
+				{
+					var patches = Harmony.GetPatchInfo(original);
+					patches.Postfixes.Do(patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));
+					patches.Prefixes.Do(patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));
+					patches.Transpilers.Do(patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));
+					patches.Finalizers.Do(patchInfo => instance.Unpatch(original, patchInfo.PatchMethod));
+					InternalMarkChanged();
+					if (AllowDebugLogs) Debug.Log("Successfully unpatched " + original.FullDescription());
+				}
+				catch (Exception e)
+				{
+					Debug.LogWarning(e);
+				}
 			});
 		}
 
@@ -492,7 +511,9 @@ namespace needle.EditorPatching
 									data1.TranspilerMethod != null ? new HarmonyMethod(data1.TranspilerMethod) : null,
 									data1.FinalizerMethod != null ? new HarmonyMethod(data1.FinalizerMethod) : null
 								);
+								// add method after successfully patching. When using Unpatch fast mode we dont do any unnecessary work in case patching didnt work
 								data1.PatchedMethods.Add(method);
+								if (AllowDebugLogs) Debug.Log("Successfully patched " + method.FullDescription());
 							}
 							catch (NotSupportedException e)
 							{
