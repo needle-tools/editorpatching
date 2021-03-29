@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using HarmonyLib;
 using UnityEditor;
@@ -293,24 +294,28 @@ namespace needle.EditorPatching
 			patchProvider.OnRegistered();
 		}
 
-		public static Task EnablePatch(EditorPatchProvider patchProvider, bool enablePersistent = true)
+		public static bool SuppressAllExceptions = false;
+
+		public static Task<bool> EnablePatch(EditorPatchProvider patchProvider, bool enablePersistent = true)
 		{
 			var patchType = patchProvider.ID();
 			return EnablePatch(patchType, enablePersistent);
 		}
 
-		public static Task EnablePatch(Type patchType, bool enablePersistent = true)
+		public static Task<bool> EnablePatch(Type patchType, bool enablePersistent = true)
 		{
 			var patchID = patchType.FullName;
-			if (patchID == null) return Task.CompletedTask;
-			return EnablePatch(patchID, enablePersistent);
+			if (patchID == null) return CompletedTaskFailed;
+			var t = EnablePatch(patchID, enablePersistent);
+			return t;
 		}
 
-		public static Task EnablePatch(string patchID, bool enablePersistent = true)
+		public static Task<bool> EnablePatch(string patchID, bool enablePersistent = true)
 		{
 			SetHarmonyDebugState(AllowDebugLogs);
+
+			Task<bool> task = null;
 			
-			var tasks = new List<Task>();
 			if (patchProviders.ContainsKey(patchID) && !harmonyPatches.ContainsKey(patchID))
 			{
 				var info = patchProviders[patchID];
@@ -323,8 +328,7 @@ namespace needle.EditorPatching
 				if (patchProviders[patchID].Instance.OnWillEnablePatch())
 				{
 					var instance = new Harmony(patchID);
-					var t = ApplyPatch(instance, info, WaitingForActivation);
-					tasks.Add(t);
+					task = ApplyPatch(instance, info, WaitingForActivation);
 					harmonyPatches.Add(patchID, instance);
 					patchProviders[patchID].Instance.OnEnabledPatch();
 					if(enablePersistent && patchProviders[patchID].Instance.Persistent())
@@ -350,7 +354,7 @@ namespace needle.EditorPatching
 				}
 			}
 
-			return Task.WhenAll(tasks);
+			return task ?? CompletedTaskFailed;
 		}
 
 		public static Task DisablePatch(EditorPatchProvider patch, bool fast, bool setPersistentState = true)
@@ -449,13 +453,13 @@ namespace needle.EditorPatching
 
 		private static readonly HashSet<string> WaitingForActivation = new HashSet<string>();
 
-		private static async Task ApplyPatch(Harmony instance, EditorPatchProviderInfo provider, HashSet<string> waitList)
+		private static async Task<bool> ApplyPatch(Harmony instance, EditorPatchProviderInfo provider, HashSet<string> waitList)
 		{
-			if (waitList.Contains(provider.PatchID)) return;
+			if (waitList.Contains(provider.PatchID)) return false;
 			waitList.Add(provider.PatchID);
 			while (true)
 			{
-				if (!waitList.Contains(provider.PatchID)) return;
+				if (!waitList.Contains(provider.PatchID)) return false;
 				if (provider.Instance.AllPatchesAreReadyToLoad()) break;
 				await Task.Delay(20);
 			}
@@ -467,13 +471,13 @@ namespace needle.EditorPatching
 				await Task.Delay(1);
 			}
 
-			if (waitList.Contains(provider.PatchID) == false) return;
-			
+			if (!waitList.Contains(provider.PatchID)) return false;
 
 			if (AllowDebugLogs)
 				Debug.Log("APPLY PATCH: " + provider.PatchID);
 
 			var patchData = provider.Data;
+			var allMethodsPatchedSuccessfully = true;
 			foreach (var data in patchData)
 			{
 				if (data.PatchedMethods == null) data.PatchedMethods = new List<MethodBase>();
@@ -483,9 +487,12 @@ namespace needle.EditorPatching
 				try
 				{
 					var data1 = data;
-					await Task.Run(async () =>
+					var receivedUnityMainThreadException = false;
+
+					async Task Patch()
 					{
-						foreach (var method in await patch.GetTargetMethods())
+						var methodsTask = patch.GetTargetMethods();
+						foreach (var method in await methodsTask)
 						{
 							if (method == null) continue;
 							if (!waitList.Contains(provider.PatchID)) break;
@@ -502,18 +509,60 @@ namespace needle.EditorPatching
 								data1.PatchedMethods.Add(method);
 								if (AllowDebugLogs) Debug.Log("Successfully patched " + method.FullDescription());
 							}
+							catch (TargetInvocationException e)
+							{
+								provider.Instance.EnableException = e;
+								allMethodsPatchedSuccessfully = false;
+								if (e.InnerException != null)
+								{
+									if (e.InnerException.IsOrHasUnityException_CanOnlyBeCalledFromMainThread())
+										receivedUnityMainThreadException = true;
+									
+									if (!SuppressAllExceptions)
+									{
+										var ex = e.InnerException;
+										var allowLog = !(ex.IsOrHasUnityException_CanOnlyBeCalledFromMainThread() && provider.Instance.SuppressUnityExceptions);
+										if(allowLog)
+										{
+											Debug.LogWarning(provider.Instance.Name + " " + ex.GetType() + ": " + ex.Message + "\n\n" + method.Name + " (" +
+											                 method.DeclaringType?.FullName + ")"
+											                 + "\n\nFull Stacktrace:\n" + ex.StackTrace);
+										
+										}
+									}
+								}
+							}
 							catch (NotSupportedException e)
 							{
-								Debug.LogWarning("Patching \"" + provider.Instance.Name + "\" is not supported: " + e.Message + "\n" + e);
+								provider.Instance.EnableException = e;
+								allMethodsPatchedSuccessfully = false;
+								if(!SuppressAllExceptions)
+									Debug.LogWarning("Patching \"" + provider.Instance.Name + "\" is not supported: " + e.Message + "\n" + e);
 							}
 							catch (Exception e)
 							{
-								Debug.LogWarning(provider.Instance.Name + " " + e.GetType() + ": " + e.Message + "\n\n" + method.Name + " (" +
+								provider.Instance.EnableException = e;
+								allMethodsPatchedSuccessfully = false;
+								if(!SuppressAllExceptions)
+									Debug.LogWarning(provider.Instance.Name + " " + e.GetType() + ": " + e.Message + "\n\n" + method.Name + " (" +
 								                 method.DeclaringType?.FullName + ")"
 								                 + "\n\nFull Stacktrace:\n" + e.StackTrace);
 							}
 						}
-					});
+					}
+
+					if (provider.Instance.PatchThreaded)
+					{
+						await Task.Run(Patch);
+						// some Unity methods can only be patched on the main thread
+						if (!allMethodsPatchedSuccessfully && receivedUnityMainThreadException)
+						{
+							allMethodsPatchedSuccessfully = true;
+							receivedUnityMainThreadException = false;
+							await Patch();
+						}
+					}
+					else await Patch();
 					
 					if (!waitList.Contains(provider.PatchID))
 					{
@@ -530,6 +579,8 @@ namespace needle.EditorPatching
 
 			if (waitList.Contains(provider.PatchID))
 				waitList.Remove(provider.PatchID);
+			
+			return allMethodsPatchedSuccessfully;
 		}
 
 
@@ -547,6 +598,26 @@ namespace needle.EditorPatching
 			}
 		}
 
+
+		private static Task<bool> _completedTaskFailed;
+		public static Task<bool> CompletedTaskFailed
+		{
+			get
+			{
+				if(_completedTaskFailed == null) _completedTaskFailed = Task.FromResult(false);
+				return _completedTaskFailed;
+			}
+		}
 		
+		private static Task<bool> _completedTaskSuccess;
+		public static Task<bool> CompletedTaskSuccess
+		{
+			get
+			{
+				if(_completedTaskSuccess == null) _completedTaskSuccess = Task.FromResult(true);
+
+				return _completedTaskSuccess;
+			}
+		}
 	}
 }

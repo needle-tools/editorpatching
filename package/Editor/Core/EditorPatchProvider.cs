@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -16,6 +17,20 @@ namespace needle.EditorPatching
 
         public string Id => ID();
         public bool IsActive => GetIsActive();
+        
+        /// <summary>
+        /// Experimental API
+        /// </summary>
+        public bool PatchThreaded = false;
+        /// <summary>
+        /// Experimental API
+        /// </summary>
+        public bool SuppressUnityExceptions = false;
+        /// <summary>
+        /// Experimental API
+        /// </summary>
+        public Exception EnableException;
+        
         
         public void EnablePatch()
         {
@@ -43,7 +58,7 @@ namespace needle.EditorPatching
 
         public bool GetIsActive() => PatchManager.PatchIsActive(this);
 
-        public Task Enable(bool updatePersistentState = true)
+        public Task<bool> Enable(bool updatePersistentState = true)
         {
             return PatchManager.EnablePatch(this, updatePersistentState);
         }
