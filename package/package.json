@@ -1,7 +1,7 @@
 {
 	"displayName": "Editor Patching",
 	"name": "com.needle.editorpatching",
-	"version": "1.1.1-exp",
+	"version": "1.1.1-exp.1",
 	"unity": "2018.3",
 	"unityRelease":"0a1",
 	"description": "Uses Harmony to patch the Editor. https://github.com/pardeike/Harmony",

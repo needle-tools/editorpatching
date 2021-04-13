@@ -18,7 +18,11 @@ namespace needle.EditorPatching
         }
 
         [InitializeOnLoadMethod]
+        #if UNITY_2019_1_OR_NEWER
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
+        #else
+		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        #endif
         internal static async void CollectAll() 
         {
             await InternalCollectPatches();

@@ -33,7 +33,11 @@ namespace needle.EditorPatching
 				if (string.IsNullOrWhiteSpace(str)) return false;
 				while (str.StartsWith("#")) str = str.Substring(1);
 				str = str.TrimStart();
+				#if UNITY_2019_1_OR_NEWER
 				Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, str);
+				#else
+				Debug.Log(str);
+				#endif
 				return true;
 			}
 		}
@@ -51,8 +55,12 @@ namespace needle.EditorPatching
 				var str = string.Join("\n", ___buffer);
 				if (string.IsNullOrWhiteSpace(str)) return true;
 				try
-				{
+				{				
+					#if UNITY_2019_1_OR_NEWER
 					Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, str);
+					#else
+					Debug.Log(str);
+					#endif
 				}
 				catch (FormatException)
 				{

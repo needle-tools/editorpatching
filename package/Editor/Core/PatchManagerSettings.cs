@@ -140,6 +140,9 @@ namespace needle.EditorPatching
         [SerializeField] private List<string> enabledPatchIds = new List<string>();
         [SerializeField] private List<string> disabledPatchIds = new List<string>();
 
+        internal static bool HasPersistentSetting(string id) =>
+            instance.enabledPatchIds.Contains(id) || instance.disabledPatchIds.Contains(id);
+
         internal static bool PersistentActive(EditorPatchProvider prov)
         {
             if (prov == null) return false;
@@ -152,6 +155,11 @@ namespace needle.EditorPatching
         {
             // foreach (var entry in instance.enabledPatchIds) Debug.Log("current active " + entry);
             return instance.enabledPatchIds.Contains(id); 
+        }
+
+        internal static bool PersistentInactive(string id)
+        {
+            return instance.disabledPatchIds.Contains(id); 
         }
 
         internal static void Clear(bool save)

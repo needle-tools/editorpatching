@@ -80,7 +80,11 @@ namespace needle.EditorPatching
 		}
 
 		[InitializeOnLoadMethod]
+		#if UNITY_2019_1_OR_NEWER
 		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
+		#else
+		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+		#endif
 		private static void Init()
 		{
 			// PatchesCollector.CollectPatches();
@@ -162,7 +166,9 @@ namespace needle.EditorPatching
 			return false;
 		}
 
-		public static bool IsPersistentEnabled(string id) => PatchManagerSettings.PersistentActive(id);
+		public static bool IsPersistentEnabled(string id) => PatchManagerSettings.PersistentActive(id);		
+		public static bool IsPersistentDisabled(string id) => PatchManagerSettings.PersistentInactive(id);
+		public static bool HasPersistentSetting(string id) => PatchManagerSettings.HasPersistentSetting(id);
 
 		public static bool TryGetFilePathForPatch(EditorPatchProvider prov, out string path) => TryGetFilePathForPatch(prov?.ID(), out path);
 
@@ -357,20 +363,20 @@ namespace needle.EditorPatching
 			return task ?? CompletedTaskFailed;
 		}
 
-		public static Task DisablePatch(EditorPatchProvider patch, bool fast, bool setPersistentState = true)
+		public static Task DisablePatch(EditorPatchProvider patch, bool fast = false, bool setPersistentState = true)
 		{
 			if (patch == null) return Task.CompletedTask;
 			return DisablePatch(patch.ID(), fast, setPersistentState);
 		}
 
-		public static Task DisablePatch(Type patch, bool fast, bool setPersistentState = true)
+		public static Task DisablePatch(Type patch, bool fast = false, bool setPersistentState = true)
 		{
 			var patchID = patch.FullName;
 			if (patchID == null) return Task.CompletedTask;
 			return DisablePatch(patchID, fast, setPersistentState);
 		}
 
-		public static Task DisablePatch(string patchID, bool fast, bool setPersistentState = true)
+		public static Task DisablePatch(string patchID, bool fast = false, bool setPersistentState = true)
 		{
 			var task = Task.CompletedTask;
 			
@@ -478,10 +484,18 @@ namespace needle.EditorPatching
 
 			var patchData = provider.Data;
 			var allMethodsPatchedSuccessfully = true;
-			foreach (var data in patchData)
+			if(patchData.Count <= 0) Debug.LogWarning("<b>No patches</b> returned by " + provider.PatchID);
+			for (var i = 0; i < patchData.Count; i++)
 			{
+				var data = patchData[i];
+				if (data == null)
+				{
+					Debug.LogError("<b>Patch [" + i + "] is null</b> in " + provider.PatchID);
+					continue;
+				}
+
 				if (data.PatchedMethods == null) data.PatchedMethods = new List<MethodBase>();
-				
+
 				var patch = data.EditorPatch;
 				// var allowLogs = AllowDebugLogs;
 				try
@@ -491,10 +505,18 @@ namespace needle.EditorPatching
 
 					async Task Patch()
 					{
-						var methodsTask = patch.GetTargetMethods();
-						foreach (var method in await methodsTask)
+						var methods = await patch.GetTargetMethods();
+						if (methods.Count <= 0)
+							Debug.LogWarning("<b>No methods</b> returned by " + patch + "\n" + provider.PatchID);
+						for (var index = 0; index < methods.Count; index++)
 						{
-							if (method == null) continue;
+							var method = methods[index];
+							if (method == null)
+							{
+								Debug.LogError("<b>Method [" + index + "] is null</b> returned from patch " + patch + "\n" + provider.PatchID);
+								continue;
+							}
+
 							if (!waitList.Contains(provider.PatchID)) break;
 							try
 							{
@@ -517,17 +539,16 @@ namespace needle.EditorPatching
 								{
 									if (e.InnerException.IsOrHasUnityException_CanOnlyBeCalledFromMainThread())
 										receivedUnityMainThreadException = true;
-									
+
 									if (!SuppressAllExceptions)
 									{
 										var ex = e.InnerException;
 										var allowLog = !(ex.IsOrHasUnityException_CanOnlyBeCalledFromMainThread() && provider.Instance.SuppressUnityExceptions);
-										if(allowLog)
+										if (allowLog)
 										{
 											Debug.LogWarning(provider.Instance.Name + " " + ex.GetType() + ": " + ex.Message + "\n\n" + method.Name + " (" +
 											                 method.DeclaringType?.FullName + ")"
 											                 + "\n\nFull Stacktrace:\n" + ex.StackTrace);
-										
 										}
 									}
 								}
@@ -536,17 +557,17 @@ namespace needle.EditorPatching
 							{
 								provider.Instance.EnableException = e;
 								allMethodsPatchedSuccessfully = false;
-								if(!SuppressAllExceptions)
+								if (!SuppressAllExceptions)
 									Debug.LogWarning("Patching \"" + provider.Instance.Name + "\" is not supported: " + e.Message + "\n" + e);
 							}
 							catch (Exception e)
 							{
 								provider.Instance.EnableException = e;
 								allMethodsPatchedSuccessfully = false;
-								if(!SuppressAllExceptions)
+								if (!SuppressAllExceptions)
 									Debug.LogWarning(provider.Instance.Name + " " + e.GetType() + ": " + e.Message + "\n\n" + method.Name + " (" +
-								                 method.DeclaringType?.FullName + ")"
-								                 + "\n\nFull Stacktrace:\n" + e.StackTrace);
+									                 method.DeclaringType?.FullName + ")"
+									                 + "\n\nFull Stacktrace:\n" + e.StackTrace);
 							}
 						}
 					}
@@ -563,7 +584,7 @@ namespace needle.EditorPatching
 						}
 					}
 					else await Patch();
-					
+
 					if (!waitList.Contains(provider.PatchID))
 					{
 						instance.UnpatchAll(provider.PatchID);

@@ -4,6 +4,12 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.1.1-exp.1] - 2021-04-13
+- Disabling patch defaults to slow mode
+- Add api to get access to persistent state
+- Fix support for 2018.4
+- Log warnings and errors for PatchProviders missing patches or methods
+
 ## [1.1.1-exp] - 2021-03-29
 - Experimental change: ``EditorPatchProvider`` has public fields for ``PatchThreaded`` (to patch on background thread), ``SuppressExceptions`` and ``EnableException`` (contains last Exception during patching)
 - ``EnablePatch`` returns if patching was successful
