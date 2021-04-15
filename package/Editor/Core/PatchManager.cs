@@ -46,6 +46,7 @@ namespace needle.EditorPatching
 		}
 
 
+		[MenuItem("Help/EditorPatching/Disable All Patches")]
 		[MenuItem(Constants.MenuItem + "Disable All Patches", priority = Constants.DefaultTopLevelPriority)]
 		public static void DisableAllPatches()
 		{
@@ -79,6 +80,10 @@ namespace needle.EditorPatching
 			}
 		}
 
+		public static bool IsInitialized => _isInitialized;
+
+		private static bool _isInitialized;
+
 		[InitializeOnLoadMethod]
 		#if UNITY_2019_1_OR_NEWER
 		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
@@ -87,8 +92,13 @@ namespace needle.EditorPatching
 		#endif
 		private static void Init()
 		{
+			_isInitialized = true;
+
+			if (!IsPersistentDisabled(typeof(HarmonyInstanceRegistry).FullName))
+				EnablePatch(typeof(HarmonyInstanceRegistry).FullName);
+			
 			// PatchesCollector.CollectPatches();
-			PatchesCollector.CollectAll();
+			// PatchesCollector.CollectAll();
 
 			var patchType = typeof(EditorPatchProvider);
 			var patches = TypeCache.GetTypesDerivedFrom(patchType);

@@ -10,6 +10,7 @@ namespace needle.EditorPatching
         void DisablePatch();
         string Name { get; }
         string Description { get; }
+        string Group { get; }
     }
 
     public static class PatchHelpers

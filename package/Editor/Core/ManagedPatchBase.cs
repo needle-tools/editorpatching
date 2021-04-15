@@ -10,10 +10,11 @@ namespace needle.EditorPatching
     public abstract class ManagedPatchBase : IManagedPatch
     {
         public string Id { get; protected set; }
-        public bool IsActive { get; protected set; }
+        public virtual bool IsActive { get; protected set; }
         public string Name { get; protected set; }
         public string Description { get; protected set; }
-        
+        public string Group { get; protected set; }
+
         private MethodBase canEnableCallback;
 
         protected abstract bool OnEnablePatch();
@@ -86,6 +87,6 @@ namespace needle.EditorPatching
             // }
         }
 
-        public static readonly string ManagedPatchPostfix = "_" + typeof(ManagedPatchIndependent).FullName;
+        protected static readonly string ManagedPatchPostfix = "_" + typeof(ManagedPatchAnnotated).FullName;
     }
 }

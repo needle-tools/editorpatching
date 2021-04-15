@@ -10,6 +10,22 @@ namespace needle.EditorPatching
     {
         public virtual string DisplayName { get; }
         public virtual string Description { get; }
+        
+        private string group;
+        public string Group
+        {
+            get
+            {
+                if(group == null) 
+                    group = GetType().Assembly.GetGroupName();
+                return group;
+            }
+            protected set
+            {
+                @group = value;
+            }
+        }
+
         public virtual bool Persistent() => true;
 
         public virtual string ID() => GetType().FullName;
