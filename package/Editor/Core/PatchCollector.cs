@@ -23,7 +23,7 @@ namespace needle.EditorPatching
         #else
 		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         #endif
-        internal static async void CollectAll() 
+        internal static void CollectAll() 
         {
             // await InternalCollectPatches();
             CollectMethodsWithHarmonyAttribute();

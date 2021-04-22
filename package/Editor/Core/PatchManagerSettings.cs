@@ -46,7 +46,7 @@ namespace needle.EditorPatching
 			var managedPatches = PatchManager.KnownPatches;
 			if (managedPatches != null && managedPatches.Count > 0)
 			{
-				var sorted = GetSorted(managedPatches);
+				var sorted = GetSorted(skipInactive, managedPatches);
 				foreach (var kvp in sorted)
 				{
 					var key = kvp.Key;
@@ -91,7 +91,7 @@ namespace needle.EditorPatching
 
 
 		private readonly IDictionary<string, IList<IManagedPatch>> sortedPatches = new Dictionary<string, IList<IManagedPatch>>();
-		private IDictionary<string, IList<IManagedPatch>> GetSorted(IReadOnlyCollection<IManagedPatch> patches)
+		private IDictionary<string, IList<IManagedPatch>> GetSorted(bool hideInactive, IEnumerable<IManagedPatch> patches)
 		{
 			sortedPatches.Clear();
 			foreach (var patch in patches.OrderBy(p => p.Group))
@@ -102,6 +102,8 @@ namespace needle.EditorPatching
 						sortedPatches.Add(group, new List<IManagedPatch>(){patch});
 					else sortedPatches[group].Add(patch);
 				}
+
+				if (hideInactive && !patch.IsActive) continue;
 				
 				if (patch.Group == null)
 				{

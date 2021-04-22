@@ -4,6 +4,10 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-exp.1] - 2021-04-22
+- Fix: ``hideInactive`` does also hide groups when all patches are inactive
+- Fix: 2019.4 compatibility ``hasFocus``
+
 ## [1.2.0-exp] - 2021-04-15
 - Added ``PatchManager.IsInitialized``
 - Initial support for capturing harmony instances that try to bypass EditorPatching completely
@@ -35,6 +39,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - added CanEnable to EditorPatch for delaying apply patch to allow for waiting of other requirements, e.g. when GUI is not yet loaded
 - ``PatchManager.EnablePatch`` awaitable
 - support Harmony.Debug and added built in patch to log harmony output to Unity console
+- moved deeplink patch into submodule
 - allow to update already registered ``EditorPatchProvider`` instance
 - allow EditorPatchProvider to override ``Id``.
 - EditorPatchProvider ``DisplayName`` and ``Description`` are now optional 

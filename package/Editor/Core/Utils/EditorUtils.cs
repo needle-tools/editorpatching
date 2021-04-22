@@ -1,3 +1,4 @@
+using System;
 using System.Reflection;
 using System.Threading.Tasks;
 using UnityEditor;
@@ -28,11 +29,23 @@ namespace needle.EditorPatching
         }
 
         
+#if UNITY_2019_4
+        private static PropertyInfo getFocusProperty;
+#endif
         
         internal static bool ProjectSettingsOpenAndFocused()
         {
             var proj = projectSettingsWindow;
+#if UNITY_2019_4
+            if (getFocusProperty == null)
+            {
+                getFocusProperty = proj.GetType().GetProperty("hasFocus", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (getFocusProperty == null) throw new Exception("Could not find EditorWindow.hasFocus property");
+            }
+            return proj && (bool)getFocusProperty.GetValue(proj);
+#else
             return proj && proj.hasFocus;
+#endif
         }
         
         private static EditorWindow _projectSettingsWindow;
