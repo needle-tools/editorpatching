@@ -6,7 +6,7 @@ namespace needle.EditorPatching
     {
         string Id { get; }
         bool IsActive { get; }
-        void EnablePatch();
+        void EnablePatch(bool forceSync = false);
         void DisablePatch();
         string Name { get; }
         string Description { get; }

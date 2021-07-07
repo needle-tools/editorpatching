@@ -1,9 +1,13 @@
 ﻿using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 namespace needle.EditorPatching
 {
@@ -32,7 +36,6 @@ namespace needle.EditorPatching
 		#region UI Implementation
 
 		private Vector2 scroll;
-		const string k_ActiveOnlyKey = "Needle.PatchManager.ActivePatchesOnly";
 
 		public override void OnGUI(string searchContext)
 		{
@@ -42,11 +45,13 @@ namespace needle.EditorPatching
 			scroll = EditorGUILayout.BeginScrollView(scroll);
 			EditorGUILayout.BeginVertical();
 
-			var skipInactive = EditorPrefs.GetBool(k_ActiveOnlyKey);
+			EditorGUI.BeginChangeCheck();
+			
+			
 			var managedPatches = PatchManager.KnownPatches;
 			if (managedPatches != null && managedPatches.Count > 0)
 			{
-				var sorted = GetSorted(skipInactive, managedPatches);
+				var sorted = GetSorted(managedPatches);
 				foreach (var kvp in sorted)
 				{
 					var key = kvp.Key;
@@ -59,7 +64,7 @@ namespace needle.EditorPatching
 						EditorGUILayout.LabelField(key, patchGroupHeader);
 						EditorGUILayout.EndHorizontal();
 						foreach(var patch in kvp.Value)
-							DrawPatchUI(patch, skipInactive, 10);
+							DrawPatchUI(patch, 10);
 						GUILayout.Space(5); 
 					}
 				}
@@ -78,8 +83,12 @@ namespace needle.EditorPatching
 			EditorGUILayout.BeginHorizontal();
 			GUILayout.FlexibleSpace();
 			PatchManager.AllowDebugLogs = GUILayout.Toggle(PatchManager.AllowDebugLogs, "Debug Log");
-			GUILayout.Space(5);
-			EditorPrefs.SetBool(k_ActiveOnlyKey, GUILayout.Toggle(EditorPrefs.GetBool(k_ActiveOnlyKey, false), "Hide Inactive"));
+			var logPath = PatchManager.HarmonyLogPath;
+			if (File.Exists(logPath))
+			{
+				if (GUILayout.Button("Open Harmony Log"))
+					Process.Start(logPath);
+			}
 			// if(GUILayout.Button("Refresh Patch List", GUILayout.Width(180)))
 			// {
 			//     PatchesCollector.CollectPatches();
@@ -87,11 +96,16 @@ namespace needle.EditorPatching
 			EditorGUILayout.EndHorizontal();
 
 			EditorGUILayout.EndVertical();
+
+			if (EditorGUI.EndChangeCheck())
+			{
+				PatchManagerSettings.instance.Save();
+			}
 		}
 
 
 		private readonly IDictionary<string, IList<IManagedPatch>> sortedPatches = new Dictionary<string, IList<IManagedPatch>>();
-		private IDictionary<string, IList<IManagedPatch>> GetSorted(bool hideInactive, IEnumerable<IManagedPatch> patches)
+		private IDictionary<string, IList<IManagedPatch>> GetSorted(IEnumerable<IManagedPatch> patches)
 		{
 			sortedPatches.Clear();
 			foreach (var patch in patches.OrderBy(p => p.Group))
@@ -102,9 +116,6 @@ namespace needle.EditorPatching
 						sortedPatches.Add(group, new List<IManagedPatch>(){patch});
 					else sortedPatches[group].Add(patch);
 				}
-
-				if (hideInactive && !patch.IsActive) continue;
-				
 				if (patch.Group == null)
 				{
 					AddToGroup("NoGroup");
@@ -116,11 +127,10 @@ namespace needle.EditorPatching
 			return sortedPatches;
 		}
 
-		private void DrawPatchUI(IManagedPatch patch, bool skipInactive, int indent = 5)
+		private void DrawPatchUI(IManagedPatch patch, int indent = 5)
 		{
 			var isActive = patch.IsActive;
-			if (skipInactive && !isActive) return;
-			EditorGUILayout.BeginHorizontal();
+			EditorGUILayout.BeginHorizontal(); 
 			GUILayout.Space(indent);
 
 			var title = patch.Name;
@@ -142,12 +152,28 @@ namespace needle.EditorPatching
 			if (!isActive)
 			{
 				if (GUILayout.Button("Activate", GUILayout.Width(100)))
+				{
 					patch.EnablePatch();
+					ToggleSelection();
+				}
 			}
 			else
 			{
 				if (GUILayout.Button("Deactivate", GUILayout.Width(100)))
+				{
 					patch.DisablePatch();
+					ToggleSelection();
+				}
+			}
+
+			async void ToggleSelection()
+			{
+				var sel = Selection.activeObject;
+				Selection.activeObject = null;
+				if (!sel) return;
+				await Task.Delay(10);
+				InternalEditorUtility.RepaintAllViews();
+				Selection.activeObject = sel;
 			}
 
 			EditorGUILayout.EndHorizontal();

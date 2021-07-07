@@ -39,10 +39,11 @@ namespace needle.EditorPatching
             }
         }
 
-        public void EnablePatch()
+        public void EnablePatch(bool forceSync = false)
         {
             if (IsActive) return;
-            HandleActivationRequest();
+            if(forceSync) HandleActivationRequestNow();
+            else HandleActivationRequest();
         }
 
         public void DisablePatch()
@@ -66,25 +67,23 @@ namespace needle.EditorPatching
             requestedActivation = true;
             while (requestedActivation && EditorApplication.isCompiling || EditorApplication.isUpdating) await Task.Delay(1);
             while(canEnableCallback != null && !(bool)canEnableCallback.Invoke(null, null)) await Task.Delay(1);
+            HandleActivationRequestNow();
+        }
+
+        private void HandleActivationRequestNow()
+        {
             // while (!EditorApplication.isPlaying && requestedActivation && !Utils.GUISkinHasLoaded()) await Task.Delay(1);
             if (!requestedActivation || IsActive) return;
             if (PatchManager.IsActive(this.Id)) return; 
             requestedActivation = false;
             IsActive = true;
-            // Debug.Log("ENABLE " + Id);
+            if(PatchManager.AllowDebugLogs)
+                Debug.Log("ENABLE " + Id);
             if (OnEnablePatch())
             {
                 PatchManagerSettings.SetPersistentActive(this.Id, true);
                 InternalEditorUtility.RepaintAllViews();
             }
-            // try
-            // {
-            // }
-            // catch (AmbiguousMatchException e)
-            // {
-            //     Debug.LogError("Can not enable patch " + Id + " because of " + nameof(AmbiguousMatchException));
-            //     Debug.LogException(e);
-            // }
         }
 
         protected static readonly string ManagedPatchPostfix = "_" + typeof(ManagedPatchAnnotated).FullName;

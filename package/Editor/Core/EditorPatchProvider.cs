@@ -48,9 +48,9 @@ namespace needle.EditorPatching
         public Exception EnableException;
         
         
-        public void EnablePatch()
+        public void EnablePatch(bool forceSync = false)
         {
-            this.Enable();
+            this.Enable(forceSync);
         }
 
         public void DisablePatch()

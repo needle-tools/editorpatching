@@ -29,7 +29,7 @@ namespace needle.EditorPatching
             CollectMethodsWithHarmonyAttribute();
         }
 
-        private static void CollectMethodsWithHarmonyAttribute() 
+        internal static void CollectMethodsWithHarmonyAttribute() 
         {
             var methods = TypeCache.GetTypesWithAttribute<HarmonyPatch>(); 
             foreach (var m in methods)

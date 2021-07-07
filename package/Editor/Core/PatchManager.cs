@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,8 @@ using UnityEngine;
 
 namespace needle.EditorPatching
 {
+	// [assembly:InternalsVisibleTo("UnityEngine.UI")]
+	
 	internal struct EditorPatchProviderInfo
 	{
 		public string PatchID;
@@ -37,6 +40,7 @@ namespace needle.EditorPatching
 	
 	// TODO: expose HarmonyInstance.DEBUG = true -> https://github.com/pardeike/Harmony/issues/79#issuecomment-386356598
 
+	[InitializeOnLoad]
 	public static class PatchManager
 	{
 		[MenuItem(Constants.MenuItem + "Clear Settings Cache", priority = Constants.DefaultTopLevelPriority)]
@@ -84,18 +88,23 @@ namespace needle.EditorPatching
 
 		private static bool _isInitialized;
 
-		[InitializeOnLoadMethod]
-		#if UNITY_2019_1_OR_NEWER
-		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
-		#else
-		[RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-		#endif
+		
+		static PatchManager()
+		{
+			Init();
+		}
+		
 		private static void Init()
 		{
 			_isInitialized = true;
 
+			PatchesCollector.CollectMethodsWithHarmonyAttribute();
+
 			if (!IsPersistentDisabled(typeof(HarmonyInstanceRegistry).FullName))
-				EnablePatch(typeof(HarmonyInstanceRegistry).FullName);
+			{
+				var t = EnablePatch(typeof(HarmonyInstanceRegistry).FullName);
+				if(!t.IsCompleted) t.RunSynchronously();
+			}
 			
 			// PatchesCollector.CollectPatches();
 			// PatchesCollector.CollectAll();
@@ -246,7 +255,6 @@ namespace needle.EditorPatching
 			if (patchProviders.ContainsKey(id)) return;
 			if (knownPatches.ContainsKey(id)) return;
 			knownPatches.Add(id, patch);
-			// Debug.Log(patch.Name + " -> " + PatchManagerSettings.PersistentActive(id)); 
 			if (!PatchManagerSettings.PersistentActive(id)) patch.DisablePatch();
 		}
         
@@ -327,10 +335,11 @@ namespace needle.EditorPatching
 		}
 
 		public static Task<bool> EnablePatch(string patchID, bool enablePersistent = true)
-		{
+		{ 
 			SetHarmonyDebugState(AllowDebugLogs);
 
 			Task<bool> task = null;
+			var wantEnable = true;
 			
 			if (patchProviders.ContainsKey(patchID) && !harmonyPatches.ContainsKey(patchID))
 			{
@@ -341,7 +350,8 @@ namespace needle.EditorPatching
 					if (AllowDebugLogs) Debug.LogWarning("Patch " + patchID + " did not return any methods");
 				}
 
-				if (patchProviders[patchID].Instance.OnWillEnablePatch())
+				wantEnable &= patchProviders[patchID].Instance.OnWillEnablePatch();
+				if (wantEnable)
 				{
 					var instance = new Harmony(patchID);
 					task = ApplyPatch(instance, info, WaitingForActivation);
@@ -350,7 +360,9 @@ namespace needle.EditorPatching
 					if(enablePersistent && patchProviders[patchID].Instance.Persistent())
 						PatchManagerSettings.SetPersistentActive(patchID, true);
 					InternalMarkChanged();
-				}
+				} 
+				else if(AllowDebugLogs)
+					Debug.Log(patchID + " does not want to be enabled. Returned false in " + nameof(EditorPatchProvider.OnWillEnablePatch));
 			}
 			else
 			{
@@ -358,17 +370,18 @@ namespace needle.EditorPatching
 					Debug.LogWarning("Can not enable " + patchID + ": Patch is unknown");
 			}
 
-			if (knownPatches.ContainsKey(patchID))
+			if (wantEnable && knownPatches.ContainsKey(patchID))
 			{
 				var patch = knownPatches[patchID];
 				if (!patch.IsActive)
 				{
-					patch.EnablePatch();
+					patch.EnablePatch(patchID.EndsWith(nameof(HarmonyInstanceRegistry)));
 					if(enablePersistent)
 						PatchManagerSettings.SetPersistentActive(patchID, true);
 					InternalMarkChanged();
 				}
 			}
+			
 
 			return task ?? CompletedTaskFailed;
 		}
@@ -471,8 +484,8 @@ namespace needle.EditorPatching
 
 		private static async Task<bool> ApplyPatch(Harmony instance, EditorPatchProviderInfo provider, HashSet<string> waitList)
 		{
-			if (waitList.Contains(provider.PatchID)) return false;
-			waitList.Add(provider.PatchID);
+			if (waitList.Contains(provider.PatchID)) return false; 
+			waitList.Add(provider.PatchID); 
 			while (true)
 			{
 				if (!waitList.Contains(provider.PatchID)) return false;
@@ -481,7 +494,7 @@ namespace needle.EditorPatching
 			}
 			
 			// wait for harmony debug patch to finish before loading other patches
-			var patchId = typeof(HarmonyUnityDebugLogPatch).FullName;
+			var patchId = typeof(HarmonyUnityDebugLogPatch).FullName;  
 			while (AllowDebugLogs && provider.PatchID != patchId && IsPersistentEnabled(patchId) && IsWaitingForLoad(patchId))
 			{
 				await Task.Delay(1);
@@ -530,6 +543,7 @@ namespace needle.EditorPatching
 							if (!waitList.Contains(provider.PatchID)) break;
 							try
 							{
+								Debug.Log("Patch: " + method);
 								instance.Patch(
 									method,
 									data1.PrefixMethod != null ? new HarmonyMethod(data1.PrefixMethod) : null,
@@ -575,9 +589,12 @@ namespace needle.EditorPatching
 								provider.Instance.EnableException = e;
 								allMethodsPatchedSuccessfully = false;
 								if (!SuppressAllExceptions)
-									Debug.LogWarning(provider.Instance.Name + " " + e.GetType() + ": " + e.Message + "\n\n" + method.Name + " (" +
-									                 method.DeclaringType?.FullName + ")"
-									                 + "\n\nFull Stacktrace:\n" + e.StackTrace);
+								{
+									Debug.LogError(provider.Instance.Name + ": " +  e);
+									// Debug.LogWarning(provider.Instance.Name + " " + e.GetType() + ": " + e.Message + "\n\n" + method.Name + " (" +
+								 //                  method.DeclaringType?.FullName + ")"
+								 //                  + "\n\nFull Stacktrace:\n" + e.StackTrace);
+								} 
 							}
 						}
 					}
@@ -614,6 +631,7 @@ namespace needle.EditorPatching
 			return allMethodsPatchedSuccessfully;
 		}
 
+		internal static string HarmonyLogPath => Application.dataPath + "/../Logs/harmony.log.txt";
 
 		private static void SetHarmonyDebugState(bool state)
 		{
@@ -621,9 +639,9 @@ namespace needle.EditorPatching
 			Harmony.DEBUG = state;
 			if (state)
 			{
-				var dir = Application.dataPath + "/../Logs";
-				if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-				var fullPath = dir + "/harmony.log.txt";
+				var fullPath = HarmonyLogPath;
+				var dir = Path.GetDirectoryName(fullPath);
+				if (dir != null && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
 				Environment.SetEnvironmentVariable("HARMONY_LOG_FILE", fullPath);
 				Debug.Log("Set Harmony debug path to " + fullPath);
 			}
