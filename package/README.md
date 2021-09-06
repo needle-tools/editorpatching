@@ -3,4 +3,4 @@ Uses harmony to patch the Unity Editor.
 
 ## Harmony
 https://github.com/pardeike/Harmony
-v1.2.0.1
+v 2.1.1.0

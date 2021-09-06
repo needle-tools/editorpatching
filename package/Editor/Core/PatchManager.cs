@@ -8,8 +8,21 @@ using System.Runtime.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using HarmonyLib;
+using needle.EditorPatching;
 using UnityEditor;
 using UnityEngine;
+
+namespace Needle
+{
+	internal static class EarlyInit
+	{
+		static EarlyInit()
+		{
+			Debug.Log("Early init patching");
+			PatchManager.Init();
+		}
+	}
+}
 
 namespace needle.EditorPatching
 {
@@ -59,7 +72,8 @@ namespace needle.EditorPatching
 
 		public static void DisableAllPatches(bool resetPersistence)
 		{
-			Debug.Log("DISABLE ALL PATCHES");
+			if(AllowDebugLogs)
+				Debug.Log("DISABLE ALL PATCHES");
 			foreach (var prov in patchProviders)
 			{
 				var instance = prov.Value.Instance;
@@ -79,7 +93,7 @@ namespace needle.EditorPatching
 					man.DisablePatch();
 					if (resetPersistence) continue;
 					// keep persistence state
-					PatchManagerSettings.SetPersistentActive(man.Id, true);
+					PatchManagerSettings.SetPersistentActive(man.Id, true); 
 				}
 			}
 		}
@@ -94,9 +108,12 @@ namespace needle.EditorPatching
 			Init();
 		}
 		
-		private static void Init()
+		internal static void Init()
 		{
+			if (_isInitialized) return;
 			_isInitialized = true;
+			if(AllowDebugLogs)
+				Debug.Log("Init patch manager");
 
 			PatchesCollector.CollectMethodsWithHarmonyAttribute();
 
@@ -543,7 +560,8 @@ namespace needle.EditorPatching
 							if (!waitList.Contains(provider.PatchID)) break;
 							try
 							{
-								Debug.Log("Patch: " + method);
+								if(AllowDebugLogs)
+									Debug.Log("Patch: " + method);
 								instance.Patch(
 									method,
 									data1.PrefixMethod != null ? new HarmonyMethod(data1.PrefixMethod) : null,
