@@ -37,6 +37,9 @@ namespace needle.EditorPatching
         {
             var proj = projectSettingsWindow;
 #if UNITY_2019_4
+            // In Unity 2019.4 projectSettingsWindow and therefore proj can be null, causing a NullReferenceException spam in the unity console.
+            if (proj == null) return false;
+
             if (getFocusProperty == null)
             {
                 getFocusProperty = proj.GetType().GetProperty("hasFocus", BindingFlags.Instance | BindingFlags.NonPublic);
